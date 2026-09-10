@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: alarmclock
+Version: 0.1.0
+Summary: A CLI alarm clock, standard library only.
+Requires-Python: >=3.11
+Provides-Extra: dev
+Requires-Dist: pytest>=7; extra == "dev"
