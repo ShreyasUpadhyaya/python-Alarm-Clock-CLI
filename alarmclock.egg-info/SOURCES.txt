@@ -1,9 +1,13 @@
+README.md
 pyproject.toml
 alarmclock/__init__.py
 alarmclock/__main__.py
+alarmclock/audio.py
 alarmclock/cli.py
 alarmclock/clock.py
+alarmclock/config.py
 alarmclock/models.py
+alarmclock/puzzles.py
 alarmclock/ringer.py
 alarmclock/runner.py
 alarmclock/schedule.py
@@ -14,7 +18,9 @@ alarmclock.egg-info/dependency_links.txt
 alarmclock.egg-info/entry_points.txt
 alarmclock.egg-info/requires.txt
 alarmclock.egg-info/top_level.txt
+tests/test_audio.py
 tests/test_cli.py
+tests/test_puzzles.py
 tests/test_ringer.py
 tests/test_runner.py
 tests/test_schedule.py

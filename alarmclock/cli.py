@@ -11,12 +11,16 @@ import argparse
 import os
 import re
 import sys
+import time as _time
 import uuid
 from datetime import datetime, time, timedelta
 
+from . import config as configmod
 from .audio import Speaker, select_player, tone_names
 from .clock import Clock, SystemClock
+from .config import ConfigError
 from .models import Alarm, Recurrence, RecurrenceKind
+from .puzzles import PuzzleGate
 from .ringer import ConsoleRinger
 from .runner import Runner
 from .store import load, save
@@ -126,6 +130,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_test = sub.add_parser("test-sound", help="play a tone once")
     p_test.add_argument("name")
+
+    p_config = sub.add_parser("config", help="read or write advanced settings")
+    config_sub = p_config.add_subparsers(dest="config_command", required=True)
+    config_sub.add_parser("show", help="print all settings")
+    p_config_set = config_sub.add_parser("set", help="set one setting")
+    p_config_set.add_argument("key")
+    p_config_set.add_argument("value")
     return parser
 
 
@@ -149,6 +160,8 @@ def main(argv: list[str] | None = None, clock: Clock | None = None) -> int:
         return _cmd_sounds()
     if args.command == "test-sound":
         return _cmd_test_sound(args.name)
+    if args.command == "config":
+        return _cmd_config(args)
     return 2
 
 
@@ -212,8 +225,40 @@ def _cmd_mutate(alarm_id: str, op) -> int:
 
 def _cmd_run(clock: Clock) -> int:
     alarms = [a for a in load() if a.enabled]
-    Runner(clock, ConsoleRinger(clock)).run(alarms)
+    settings = configmod.load()
+    gate_factory = _gate_factory(settings)
+    Runner(clock, ConsoleRinger(clock, gate_factory=gate_factory)).run(alarms)
     return 0
+
+
+def _gate_factory(settings: dict):
+    if not settings["puzzle.enabled"]:
+        return None
+    return lambda: PuzzleGate(
+        settings["puzzle.type"],
+        settings["puzzle.difficulty"],
+        settings["puzzle.streak"],
+    )
+
+
+def _cmd_config(args: argparse.Namespace) -> int:
+    if args.config_command == "show":
+        for key, value in configmod.load().items():
+            print(f"{key} = {_render(value)}")
+        return 0
+    try:
+        coerced = configmod.set_value(args.key, args.value)
+    except ConfigError as exc:
+        print(f"alarmclock: {exc}", file=sys.stderr)
+        return 2
+    print(f"{args.key} = {_render(coerced)}")
+    return 0
+
+
+def _render(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def _cmd_sounds() -> int:
@@ -239,9 +284,14 @@ def _cmd_test_sound(name: str) -> int:
                 file=sys.stderr,
             )
             return 2
-        print(f"playing {name} via {speaker.player.name}")
+        print(f"playing {name} via {speaker.player.name} (Ctrl+C to stop)")
+        try:
+            _time.sleep(3.0)
+        except KeyboardInterrupt:
+            pass
         return 0
     finally:
+        speaker.stop()
         speaker.cleanup()
 
 

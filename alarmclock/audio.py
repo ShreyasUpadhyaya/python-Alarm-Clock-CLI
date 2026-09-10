@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import wave
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -152,16 +153,34 @@ class SimpleAudioPlayer:
         import simpleaudio  # noqa: F401  (probe; raises ImportError if absent)
 
         self._simpleaudio = simpleaudio
+        self._wave_obj = None
         self._play_obj = None
+        self._thread: threading.Thread | None = None
+        self._stop: threading.Event | None = None
 
     def play(self, path: str) -> None:
-        wave_obj = self._simpleaudio.WaveObject.from_wave_file(path)
-        self._play_obj = wave_obj.play()
+        self.stop()
+        self._wave_obj = self._simpleaudio.WaveObject.from_wave_file(path)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, args=(self._stop,), daemon=True)
+        self._thread.start()
+
+    def _loop(self, stop: "threading.Event") -> None:
+        while not stop.is_set():
+            self._play_obj = self._wave_obj.play()
+            while self._play_obj.is_playing():
+                if stop.wait(0.1):
+                    break
+            self._play_obj.stop()
 
     def stop(self) -> None:
+        if self._stop is not None:
+            self._stop.set()
         if self._play_obj is not None:
             self._play_obj.stop()
-            self._play_obj = None
+        self._play_obj = None
+        self._thread = None
+        self._stop = None
 
 
 class CommandLinePlayer:
@@ -190,27 +209,52 @@ class CommandLinePlayer:
             raise BackendUnavailable("no command-line audio player found")
 
         self._proc: subprocess.Popen | None = None
+        self._thread: threading.Thread | None = None
+        self._stop: threading.Event | None = None
 
     def play(self, path: str) -> None:
         if self._winsound is not None:
             self._winsound.PlaySound(
-                path, self._winsound.SND_FILENAME | self._winsound.SND_ASYNC
+                path,
+                self._winsound.SND_FILENAME
+                | self._winsound.SND_ASYNC
+                | self._winsound.SND_LOOP,
             )
             return
         assert self._cmd is not None
-        self._proc = subprocess.Popen(
-            [*self._cmd, path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        self._stop_repeat()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._repeat, args=(path, self._stop), daemon=True
         )
+        self._thread.start()
+
+    def _repeat(self, path: str, stop: "threading.Event") -> None:
+        while not stop.is_set():
+            self._proc = subprocess.Popen(
+                [*self._cmd, path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            while self._proc.poll() is None:
+                if stop.wait(0.1):
+                    self._proc.terminate()
+                    return
+
+    def _stop_repeat(self) -> None:
+        if self._stop is not None:
+            self._stop.set()
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.terminate()
+        self._proc = None
+        self._thread = None
+        self._stop = None
 
     def stop(self) -> None:
         if self._winsound is not None:
             self._winsound.PlaySound(None, self._winsound.SND_PURGE)
             return
-        if self._proc is not None and self._proc.poll() is None:
-            self._proc.terminate()
-        self._proc = None
+        self._stop_repeat()
 
 
 class BannerPlayer:
